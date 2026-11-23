@@ -1,7 +1,7 @@
 From ea5ff2d7890ed0be8b72017d907a5b105bdae5e4 Mon Sep 17 00:00:00 2001
 From: Timothy Schmidt <timschmidt@gmail.com>
 Date: Mon, 23 Nov 2026 04:11:43 -0500
-Subject: [PATCH 2/2] yotonym03: native 8-48 kHz DAC rates, buffering and PCM
+Subject: [PATCH 2/3] yotonym03: native 8-48 kHz DAC rates, buffering and PCM
  start tuning
 
 - HW_SAMPR_CAPS: both DAC clock families (no resampling of 48 kHz MP3s)

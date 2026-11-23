@@ -309,8 +309,9 @@ chunks (playback starts on a full buffer), ~6.8 KB file ring reclaimed in ≥1.7
 buffering polls every 50 ms, UI yield points (list draw, LCD update, directory read) so long UI work cannot starve
 the decoder.
 
-**UI/IO.** 128×128 LCD, 9 keys on two resistor ladders (incl. Vol+/Vol-; the power key is not visible to software,
-hold Back to power off), backlight PWM, SD card (CMD18/25, 24 MHz), USB mass storage (FOTG210 core, ~2.6 MB/s
+**UI/IO.** 128×128 LCD, 9 keys on two resistor ladders (incl. Vol+/Vol-) plus Power, a level in PMU+0x2C bit 1
+(1 = held; found by a register scan while pressed - the vendor key driver never reads it). Tap Power in Now Playing
+= pause/resume, hold = power off, backlight PWM, SD card (CMD18/25, 24 MHz), USB mass storage (FOTG210 core, ~2.6 MB/s
 read), timer, watchdog. Folders larger than the browser buffer (e.g. 3000 entries) are shown as sorted windows of
 ~50 entries with "<< Previous entries" / "More entries >>" (one directory pass, ~1-2 s, per move); a playlist
 started in such a folder continues into the next window at its end (verified: tracks 58→120 across windows).
@@ -323,8 +324,7 @@ work as is: buflib keeps its handle table at the end of the pool, right below th
 **Limits.** 320 KB RAM: no FLAC/Vorbis/AAC/WMA/Opus (FLAC: 24-32 KB decode buffers plus 8-12 KB frames vs a
 ~27 KB codec area and ~9 KB file ring; the others are larger still; Speex/WavPack are 13-14 KB over), no database, no loadable
 language, playlists ≤ 500 entries (a big folder plays on window by window), CD-quality WAV/AIFF can still drop
-out briefly while browsing (176 KB/s vs a ~7 KB file ring). The power key is wired to the PMU's on/off logic only
-(no software-visible state in the PMU, GPIO or ADC registers; the vendor key driver reads none either).
+out briefly while browsing (176 KB/s vs a ~7 KB file ring).
 
 **Testing.** `tools/ym03_maintest.py` boots a build from RAM in test mode and reads results after the self-reboot:
 `--wps`, `--ui` (injected keys), `--browse[-play]`, `--plugin N`, `--keys`, `--pcm`, `--faults`/`--rofaults`

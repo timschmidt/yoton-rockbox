@@ -28,6 +28,8 @@ p.add_argument("--back", action="store_true", help="with --ui: profile from the 
 p.add_argument("--bigplay", action="store_true", help="play across windows of /ym03big")
 p.add_argument("--browse", action="store_true", help="windowed browser test in /KEXP")
 p.add_argument("--browse-play", action="store_true", help="the same with an MP3 playing")
+p.add_argument("--powerkey2", action="store_true", help="power key candidate check")
+p.add_argument("--powerkey", action="store_true", help="guided power key search")
 p.add_argument("--keys", action="store_true", help="guided capture of VOL+/VOL-/POWER")
 p.add_argument("--dirtime", action="store_true", help="time two full reads of /KEXP")
 p.add_argument("--plugin", type=int, help="run test plugin N (see main.c) instead of autoplay")
@@ -70,6 +72,10 @@ if a.browse_play:
     d.write(0x137FDC, b"BRWP")
 if a.browse:
     d.write(0x137FDC, b"BRWS")
+if a.powerkey2:
+    d.write(0x137FDC, b"PWR2")
+if a.powerkey:
+    d.write(0x137FDC, b"PWRK")
 if a.keys:
     d.write(0x137FDC, b"KEYS")
 if a.dirtime:

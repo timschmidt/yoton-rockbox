@@ -1,0 +1,296 @@
+From ac6a32e2ed021acda8b03c3f4bf5d497e492771b Mon Sep 17 00:00:00 2001
+From: Timothy Schmidt <timschmidt@gmail.com>
+Date: Mon, 23 Nov 2026 04:55:49 -0500
+Subject: [PATCH 3/3] yotonym03: power key, buffering every tick, yield in skin
+ rendering
+
+- Power: PMU+0x2c bit 1 (level). Hold = power off, tap in Now Playing =
+  pause/resume; Back stays the plugins' Power key
+- buffering polls every tick on small-memory targets (CD-quality PCM
+  empties the few-KiB file buffer in ~40 ms)
+- UI yield point at the start of each skin viewport render (the first
+  Now Playing draw could outlast the PCM buffer)
+- test hooks: power key search
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ apps/buffering.c                              |   5 +-
+ apps/gui/skin_engine/skin_render.c            |   5 +
+ apps/keymaps/keymap-yotonym03.c               |   1 +
+ apps/main.c                                   | 148 ++++++++++++++++++
+ apps/plugin.h                                 |   4 +-
+ .../arm/atj2157/yotonym03/button-target.h     |  12 +-
+ .../arm/atj2157/yotonym03/button-yotonym03.c  |   5 +
+ 7 files changed, 171 insertions(+), 9 deletions(-)
+
+diff --git a/apps/buffering.c b/apps/buffering.c
+index 5867cf3..e8c3740 100644
+--- a/apps/buffering.c
++++ b/apps/buffering.c
+@@ -1607,8 +1607,9 @@ static void NORETURN_ATTR buffering_thread(void)
+                 cancel_cpu_boost();
+             }
+ #if MEMORYSIZE < 2
+-            /* a few KiB of buffer last a fraction of a second: look often */
+-            queue_wait_w_tmo(&buffering_queue, &ev, filling ? 1 : HZ/20);
++            /* a few KiB of buffer last a fraction of a second (~40 ms of
++               CD-quality PCM): look every tick */
++            queue_wait_w_tmo(&buffering_queue, &ev, 1);
+ #else
+             queue_wait_w_tmo(&buffering_queue, &ev, filling ? 1 : HZ/2);
+ #endif
+diff --git a/apps/gui/skin_engine/skin_render.c b/apps/gui/skin_engine/skin_render.c
+index 5c731e0..9810625 100644
+--- a/apps/gui/skin_engine/skin_render.c
++++ b/apps/gui/skin_engine/skin_render.c
+@@ -745,6 +745,11 @@ bool skin_render_alternator(struct skin_element* element, struct skin_draw_info
+ void skin_render_viewport(struct skin_element* viewport, struct gui_wps *gwps,
+                         struct skin_viewport* skin_viewport, unsigned long refresh_type)
+ {
++#ifdef UI_YIELD_POINT
++    /* a full skin render can outlast the PCM buffer; the skin data is not
++     * in movable memory */
++    UI_YIELD_POINT();
++#endif
+     struct screen *display = gwps->display;
+     char linebuf[MAX_LINE];
+     skin_render_func func = skin_render_line;
+diff --git a/apps/keymaps/keymap-yotonym03.c b/apps/keymaps/keymap-yotonym03.c
+index ad124d6..26db87a 100644
+--- a/apps/keymaps/keymap-yotonym03.c
++++ b/apps/keymaps/keymap-yotonym03.c
+@@ -38,6 +38,7 @@ static const struct button_mapping button_context_standard[] = {
+ 
+ static const struct button_mapping button_context_wps[] = {
+     { ACTION_WPS_PLAY,        BUTTON_SELECT|BUTTON_REL,     BUTTON_SELECT },
++    { ACTION_WPS_PLAY,        BUTTON_POWER|BUTTON_REL,      BUTTON_POWER },
+     { ACTION_WPS_STOP,        BUTTON_BACK|BUTTON_REPEAT,  BUTTON_BACK },
+     { ACTION_WPS_SKIPNEXT,    BUTTON_RIGHT|BUTTON_REL,     BUTTON_RIGHT },
+     { ACTION_WPS_SKIPPREV,    BUTTON_LEFT|BUTTON_REL,     BUTTON_LEFT },
+diff --git a/apps/main.c b/apps/main.c
+index 873b086..cddf308 100644
+--- a/apps/main.c
++++ b/apps/main.c
+@@ -636,6 +636,154 @@ int main(void)
+             while (1)
+                 sleep(HZ);
+         }
++        /* "PWRK" at 0x137fdc: power key search. Phases (8 s): idle, tap
++         * POWER repeatedly, hold POWER ~1 s. Scans PMU 0x000-0x1fc, RTC/timer
++         * 0xc0030000-0xfc, GPIO/MFP 0xc01c0000-0x3fc, NVIC pending; per
++         * phase at 0x307c00 + 256*p: up to 31 {address, changed bits} vs
++         * idle (ADC/counter registers that change while idle are left out) */
++        if (atj_is_testmode() && *(volatile uint32_t *)0x137fdc == 0x4b525750)
++        {
++            static const struct { uint32_t base, n; } rg[] = {
++                { 0xc0010000, 128 }, { 0xc0030000, 64 },
++                { 0xc01c0000, 256 }, { 0xe000e200, 2 },
++            };
++            /* idle values and idle noise in the (unused) plugin buffer */
++            uint32_t *base = (uint32_t *)0x137000, *noise = base + 450;
++            volatile uint32_t *out = (volatile uint32_t *)0x307c00;
++            extern volatile bool atj_testmode_hold;
++            atj_testmode_hold = true;
++            for (int i = 0; i < 256; i++)
++                out[i] = 0;
++            for (long t = current_tick + 240 * HZ; TIME_BEFORE(current_tick, t);)
++            {
++                lcd_clear_display();
++                lcd_putsf(0, 0, "Power key test:");
++                lcd_putsf(0, 1, "press SELECT");
++                lcd_putsf(0, 2, "to start");
++                lcd_update();
++                if (button_read_device() == BUTTON_SELECT)
++                    break;
++                sleep(HZ / 10);
++            }
++            while (button_read_device())
++                sleep(HZ / 10);
++            static const char * const prompt[] = {
++                "Don't touch", "Tap POWER", "Hold POWER 1s"
++            };
++            for (int ph = 0; ph < 3; ph++)
++            {
++                volatile uint32_t *o = out + 64 * ph;
++                long end = current_tick + 8 * HZ;
++                bool first = true;
++                while (TIME_BEFORE(current_tick, end))
++                {
++                    int k = 0;
++                    for (unsigned r = 0; r < sizeof(rg) / sizeof(rg[0]); r++)
++                        for (uint32_t i = 0; i < rg[r].n; i++, k++)
++                        {
++                            uint32_t a = rg[r].base + 4 * i;
++                            /* skip the watchdog/timer counters' own writes */
++                            uint32_t v = ATJ_REG(a);
++                            if (ph == 0)
++                            {
++                                if (first)
++                                    base[k] = v, noise[k] = 0;
++                                else
++                                    noise[k] |= v ^ base[k];
++                                continue;
++                            }
++                            uint32_t x = (v ^ base[k]) & ~noise[k];
++                            if (!x)
++                                continue;
++                            int j;
++                            for (j = 0; j < 31 && o[2 * j + 1]; j++)
++                                if (o[2 * j] == a)
++                                    break;
++                            if (j < 31)
++                            {
++                                o[2 * j] = a;
++                                o[2 * j + 1] |= x;
++                            }
++                        }
++                    first = false;
++                    lcd_clear_display();
++                    lcd_putsf(0, 0, "%s", prompt[ph]);
++                    lcd_putsf(0, 1, "%ld s", (end - current_tick) / HZ + 1);
++                    lcd_update();
++                    sleep(HZ / 50);
++                }
++            }
++            lcd_clear_display();
++            lcd_putsf(0, 0, "Done, thanks");
++            lcd_update();
++            sleep(2 * HZ);
++            system_reboot();
++        }
++        /* "PWR2" at 0x137fdc: power key candidates PMU+0x2c bit 1 and
++         * PMU+0x28 bit 0. Phase 1 (8 s): tap POWER 5 times, values only read;
++         * phase 2: tap 5 times again, the bits are written back as 1 after
++         * each read (in case they latch, write-1-to-clear). Results at
++         * 0x307c00: per phase {rises, falls} of each bit, first/last values */
++        if (atj_is_testmode() && *(volatile uint32_t *)0x137fdc == 0x32525750)
++        {
++            volatile uint32_t *out = (volatile uint32_t *)0x307c00;
++            extern volatile bool atj_testmode_hold;
++            atj_testmode_hold = true;
++            for (int i = 0; i < 64; i++)
++                out[i] = 0;
++            for (long t = current_tick + 240 * HZ; TIME_BEFORE(current_tick, t);)
++            {
++                lcd_clear_display();
++                lcd_putsf(0, 0, "Power key test 2:");
++                lcd_putsf(0, 1, "press SELECT");
++                lcd_update();
++                if (button_read_device() == BUTTON_SELECT)
++                    break;
++                sleep(HZ / 10);
++            }
++            while (button_read_device())
++                sleep(HZ / 10);
++            for (int ph = 0; ph < 2; ph++)
++            {
++                volatile uint32_t *o = out + 16 * ph;
++                uint32_t p2c = ATJ_REG(0xc001002c), p28 = ATJ_REG(0xc0010028);
++                o[4] = p2c; o[5] = p28;
++                long end = current_tick + 8 * HZ;
++                while (TIME_BEFORE(current_tick, end))
++                {
++                    uint32_t a = ATJ_REG(0xc001002c), b = ATJ_REG(0xc0010028);
++                    if ((a ^ p2c) & 2) o[(a & 2) ? 0 : 1]++;
++                    if ((b ^ p28) & 1) o[(b & 1) ? 2 : 3]++;
++                    p2c = a; p28 = b;
++                    if (ph == 1)
++                    {
++                        if (a & 2) ATJ_REG(0xc001002c) = 2;
++                        if (b & 1) ATJ_REG(0xc0010028) = b;
++                    }
++                    lcd_clear_display();
++                    lcd_putsf(0, 0, ph ? "Tap POWER 5x (2)" : "Tap POWER 5x");
++                    lcd_putsf(0, 1, "%ld s", (end - current_tick) / HZ + 1);
++                    lcd_putsf(0, 3, "2c %08lx", a);
++                    lcd_putsf(0, 4, "28 %08lx", b);
++                    lcd_putsf(0, 5, "2c:%lu/%lu 28:%lu/%lu", o[0], o[1], o[2], o[3]);
++                    lcd_update();
++                    sleep(1);
++                }
++                o[6] = ATJ_REG(0xc001002c); o[7] = ATJ_REG(0xc0010028);
++                if (ph == 0)
++                {
++                    lcd_clear_display();
++                    lcd_putsf(0, 0, "Wait...");
++                    lcd_update();
++                    sleep(2 * HZ);
++                }
++            }
++            lcd_clear_display();
++            lcd_putsf(0, 0, "Done, thanks");
++            lcd_update();
++            sleep(2 * HZ);
++            system_reboot();
++        }
+         /* "DIRT" at 0x137fdc: time full reads of /KEXP (count, ticks) */
+         if (atj_is_testmode() && *(volatile uint32_t *)0x137fdc == 0x54524944)
+         {
+diff --git a/apps/plugin.h b/apps/plugin.h
+index 1737428..600b264 100644
+--- a/apps/plugin.h
++++ b/apps/plugin.h
+@@ -147,9 +147,11 @@ int plugin_open(const char *plugin, const char *parameter);
+ 
+ #if defined(PLUGIN) && (CONFIG_KEYPAD == YOTON_YM03_PAD)
+ /* Plugins use the HiFiMAN HM60x key layout: its six keys (d-pad, Select,
+- * Power) are a subset of the YM03's, with Back standing in for Power. */
++ * Power) are a subset of the YM03's; Back stands in for Power (which, held,
++ * powers off) so that quitting a plugin stays on Back. */
+ #undef CONFIG_KEYPAD
+ #define CONFIG_KEYPAD HM60X_PAD
++#undef BUTTON_POWER
+ #define BUTTON_POWER BUTTON_BACK
+ #endif
+ 
+diff --git a/firmware/target/arm/atj2157/yotonym03/button-target.h b/firmware/target/arm/atj2157/yotonym03/button-target.h
+index 8eeb905..4cd1a86 100644
+--- a/firmware/target/arm/atj2157/yotonym03/button-target.h
++++ b/firmware/target/arm/atj2157/yotonym03/button-target.h
+@@ -19,7 +19,8 @@
+ #define __YOTONYM03_BUTTON_TARGET_H__
+ 
+ /*
+- * Nine keys on two resistor ladders (measured on hardware):
++ * Power is a PMU status bit; nine keys on two resistor ladders (measured
++ * on hardware):
+  *   LRADC1 (PMU+0x50, idle ~742): Back ~0, Right ~125, Vol+ ~245,
+  *          Vol- ~370
+  *   ADC2   (PMU+0x64 via GPIO17, idle ~838): Menu ~0, Left ~140,
+@@ -34,13 +35,12 @@
+ #define BUTTON_BACK         0x00000040
+ #define BUTTON_VOL_UP       0x00000080
+ #define BUTTON_VOL_DOWN     0x00000100
++#define BUTTON_POWER        0x00000200  /* PMU+0x2c bit 1 (level, 1 = held) */
+ 
+-#define BUTTON_MAIN         0x000001ff
++#define BUTTON_MAIN         0x000003ff
+ 
+-/* the power key does not show up on the ladders, the PMU registers or the
+- * GPIOs scanned (it may only act on the PMU's power path): hold Back to
+- * power off */
+-#define POWEROFF_BUTTON     BUTTON_BACK
++/* hold Power to power off */
++#define POWEROFF_BUTTON     BUTTON_POWER
+ #define POWEROFF_COUNT      40
+ 
+ /* raw sampling, used by the diagnostics screen in the bootloader */
+diff --git a/firmware/target/arm/atj2157/yotonym03/button-yotonym03.c b/firmware/target/arm/atj2157/yotonym03/button-yotonym03.c
+index 22e230b..3d7fd39 100644
+--- a/firmware/target/arm/atj2157/yotonym03/button-yotonym03.c
++++ b/firmware/target/arm/atj2157/yotonym03/button-yotonym03.c
+@@ -80,6 +80,11 @@ int button_read_device(void)
+ {
+     static int last_raw, stable;
+     int raw = button_decode();
++    /* the power key is a level in the PMU (found by scanning while it was
++     * pressed; the vendor key driver never reads it) - read only: the
++     * neighbouring registers hold power-path state */
++    if (ATJ_REG(PMU_BASE + 0x2c) & 2)
++        raw |= BUTTON_POWER;
+     if (raw == last_raw)
+         stable = raw;
+     last_raw = raw;
+-- 
+2.56.0
+
