@@ -318,9 +318,12 @@ started in such a folder continues into the next window at its end (verified: tr
 
 **Plugins.** The PCM buffer has a fixed place right below the codec area (`PCMBUF_STATIC_SIZE`, not in the audio
 buffer), so plugins, which stop playback first, load into PCM buffer + codec area + plugin buffer (46 KB).
-HM60x key layout (Back = Power). 94 of 146 build and fit; 92 are installed in `.rockbox/rocks` (Rockblox,
-Solitaire, Sudoku verified on the device). Chessbox fails (engine too deep for the 6 KB stack); 8 do not fit
-(the smallest misses by 0.5 and 1.2 KB). Playback cannot start while a plugin is loaded. USB mass storage uses
+HM60x key layout (Back = Power). 89 of 146 build and fit as normal plugins; 88 are installed in
+`.rockbox/rocks` (Rockblox, Solitaire, Sudoku, Cube, Snake, Minesweeper, Calculator, Stopwatch verified on the
+device). 8 more are too large (the smallest miss by 0.5 and 1.2 KB). Chessbox, Goban, Pictureflow, Rockboy and
+ZXBox are "overlay" plugins on small targets: a stub that loads the real code into the audio buffer at a fixed
+address in RAM that assumes a large audio buffer at the start of RAM; their engines also exceed the RAM left, so
+only the useless stubs build (not installed). Playback cannot start while a plugin is loaded. USB mass storage uses
 the same fixed area for its 16 KB of transfer buffers (playback is stopped in USB mode).
 
 **Limits.** 320 KB RAM: no FLAC/Vorbis/AAC/WMA/Opus (FLAC: 24-32 KB decode buffers plus 8-12 KB frames vs a
