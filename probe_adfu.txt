@@ -1,0 +1,74 @@
+CC identify: status=0 data=b'ACTIONSUSBD'
+Traceback (most recent call last):
+  File "/home/tim/Documents/GitHub/yoton/actions_probe.py", line 207, in <module>
+    main()
+    ~~~~^^
+  File "/home/tim/Documents/GitHub/yoton/actions_probe.py", line 197, in main
+    adfu_reboot(t)
+    ~~~~~~~~~~~^^^
+  File "/home/tim/Documents/GitHub/yoton/actions_probe.py", line 160, in adfu_reboot
+    st, data, _ = t.cmd(c, data_in=2)
+                  ~~~~~^^^^^^^^^^^^^^
+  File "/home/tim/Documents/GitHub/yoton/actions_probe.py", line 105, in cmd
+    csw = bytes(self.ep_in.read(13, timeout_ms))
+                ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^
+  File "/home/tim/Documents/GitHub/yoton/.venv/lib64/python3.14/site-packages/usb/core.py", line 431, in read
+    return self.device.read(self, size_or_buffer, timeout)
+           ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/tim/Documents/GitHub/yoton/.venv/lib64/python3.14/site-packages/usb/core.py", line 1043, in read
+    ret = fn(
+            self._ctx.handle,
+    ...<2 lines>...
+            buff,
+            self.__get_timeout(timeout))
+  File "/home/tim/Documents/GitHub/yoton/.venv/lib64/python3.14/site-packages/usb/backend/libusb1.py", line 850, in bulk_read
+    return self.__read(self.lib.libusb_bulk_transfer,
+           ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                       dev_handle,
+                       ^^^^^^^^^^^
+    ...<2 lines>...
+                       buff,
+                       ^^^^^
+                       timeout)
+                       ^^^^^^^^
+  File "/home/tim/Documents/GitHub/yoton/.venv/lib64/python3.14/site-packages/usb/backend/libusb1.py", line 958, in __read
+    _check(retval)
+    ~~~~~~^^^^^^^^
+  File "/home/tim/Documents/GitHub/yoton/.venv/lib64/python3.14/site-packages/usb/backend/libusb1.py", line 604, in _check
+    raise USBError(_strerror(ret), ret, _libusb_errno[ret])
+usb.core.USBError: [Errno 5] Input/Output Error
+detach: [Errno 13] Access denied (insufficient permissions)
+Traceback (most recent call last):
+  File "/home/tim/Documents/GitHub/yoton/actions_probe.py", line 207, in <module>
+    main()
+    ~~~~^^
+  File "/home/tim/Documents/GitHub/yoton/actions_probe.py", line 191, in main
+    t = SGTransport(a.sg) if a.sg else BOTTransport(a.pid)
+                                       ~~~~~~~~~~~~^^^^^^^
+  File "/home/tim/Documents/GitHub/yoton/actions_probe.py", line 85, in __init__
+    cfg = self.dev.get_active_configuration()
+  File "/home/tim/Documents/GitHub/yoton/.venv/lib64/python3.14/site-packages/usb/core.py", line 935, in get_active_configuration
+    return self._ctx.get_active_configuration(self)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/home/tim/Documents/GitHub/yoton/.venv/lib64/python3.14/site-packages/usb/core.py", line 113, in wrapper
+    return f(self, *args, **kwargs)
+  File "/home/tim/Documents/GitHub/yoton/.venv/lib64/python3.14/site-packages/usb/core.py", line 256, in get_active_configuration
+    self.managed_open()
+    ~~~~~~~~~~~~~~~~~^^
+  File "/home/tim/Documents/GitHub/yoton/.venv/lib64/python3.14/site-packages/usb/core.py", line 113, in wrapper
+    return f(self, *args, **kwargs)
+  File "/home/tim/Documents/GitHub/yoton/.venv/lib64/python3.14/site-packages/usb/core.py", line 132, in managed_open
+    self.handle = self.backend.open_device(self.dev)
+                  ~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^
+  File "/home/tim/Documents/GitHub/yoton/.venv/lib64/python3.14/site-packages/usb/backend/libusb1.py", line 808, in open_device
+    return _DeviceHandle(dev)
+  File "/home/tim/Documents/GitHub/yoton/.venv/lib64/python3.14/site-packages/usb/backend/libusb1.py", line 656, in __init__
+    _check(_lib.libusb_open(self.devid, byref(self.handle)))
+    ~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/tim/Documents/GitHub/yoton/.venv/lib64/python3.14/site-packages/usb/backend/libusb1.py", line 604, in _check
+    raise USBError(_strerror(ret), ret, _libusb_errno[ret])
+usb.core.USBError: [Errno 13] Access denied (insufficient permissions)
+ADFU CC info: status=0
+00000000  00 43 41 44 46 55 44 30 51 41 00 00 00 00 00 00  .CADFUD0QA......
+00000010  00 00                                            ..
+chip id 0x3051 -> ATJ2157 (ARMv7-M)

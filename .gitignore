@@ -1,0 +1,18 @@
+# vendor firmware, boot ROM and RAM dumps, and analysis derived from them:
+# not ours to publish
+/dumps/
+/re/
+# third-party trees and tools (fetched separately)
+/ext/
+/tools/ghidra*/
+# build outputs and local state
+/build/
+/.venv/
+__pycache__/
+/.claude/
+/ym03_main.png
+/payloads/*.bin
+/payloads/*.elf
+/payloads/*.raw
+/payloads/*.mbrec
+/payloads/*.o
