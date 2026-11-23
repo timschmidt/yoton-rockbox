@@ -302,7 +302,9 @@ RAM), regions 1-7 are an LRU pool of mapped pages with sub-region masks; a fault
 **Audio.** Internal DAC via DMA channel 5. Loadable codecs (fit the 23 KB codec area): AIFF, WAV (incl. ADPCM
 variants), AU, ADX, VOX, MOD (SMAF builds but did not play an ffmpeg-made file); MP3/MP2/MP1 use a built-in
 minimp3 decoder on the FPU (`apps/codec_builtin_mp3.c`, state in the codec area + plugin buffer). 320 kbps MP3
-plays with Now Playing up (~15 % idle). Small-memory tuning: 8 × 2 KB PCM chunks, ~9.6 KB file ring, 2 KB guard,
+plays with Now Playing up (~15 % idle). The DAC runs natively at 8-48 kHz (both clock families), so the
+48 kHz MP3s that make up most of the owner's library are not resampled. Small-memory tuning: 9 × 2 KB PCM
+chunks (playback starts on a full buffer), ~6.8 KB file ring reclaimed in ≥1.7 KB steps, 2 KB guard,
 buffering polls every 50 ms, UI yield points (list draw, LCD update, directory read) so long UI work cannot starve
 the decoder.
 
@@ -318,7 +320,9 @@ started in such a folder continues into the next window at its end (verified: tr
 
 **Limits.** 320 KB RAM: no FLAC/Vorbis/AAC/WMA/Opus (FLAC: 24-32 KB decode buffers plus 8-12 KB frames vs a
 ~27 KB codec area and ~9 KB file ring; the others are larger still; Speex/WavPack are 13-14 KB over), no database, no loadable
-language, playlists ≤ 500 entries, WAV/AIFF can drop out while browsing (CD-quality rate vs 9.6 KB file ring).
+language, playlists ≤ 500 entries (a big folder plays on window by window), CD-quality WAV/AIFF can still drop
+out briefly while browsing (176 KB/s vs a ~7 KB file ring). The power key is wired to the PMU's on/off logic only
+(no software-visible state in the PMU, GPIO or ADC registers; the vendor key driver reads none either).
 
 **Testing.** `tools/ym03_maintest.py` boots a build from RAM in test mode and reads results after the self-reboot:
 `--wps`, `--ui` (injected keys), `--browse[-play]`, `--plugin N`, `--keys`, `--pcm`, `--faults`/`--rofaults`

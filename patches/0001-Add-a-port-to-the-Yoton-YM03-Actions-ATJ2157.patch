@@ -1,7 +1,7 @@
 From e929323b24b535774a4918e9e1a9b6c4d5e1cbc2 Mon Sep 17 00:00:00 2001
 From: Timothy Schmidt <timschmidt@gmail.com>
 Date: Mon, 23 Nov 2026 03:29:28 -0500
-Subject: [PATCH] Add a port to the Yoton YM03 (Actions ATJ2157)
+Subject: [PATCH 1/2] Add a port to the Yoton YM03 (Actions ATJ2157)
 
 New target yotonym03: Cortex-M4 at 48 MHz with 320 KiB of SRAM, SPI NOR,
 SD card, 128x128 LCD, internal DAC, FOTG210 USB.

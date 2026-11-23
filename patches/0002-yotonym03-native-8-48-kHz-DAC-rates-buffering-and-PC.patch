@@ -1,0 +1,174 @@
+From ea5ff2d7890ed0be8b72017d907a5b105bdae5e4 Mon Sep 17 00:00:00 2001
+From: Timothy Schmidt <timschmidt@gmail.com>
+Date: Mon, 23 Nov 2026 04:11:43 -0500
+Subject: [PATCH 2/2] yotonym03: native 8-48 kHz DAC rates, buffering and PCM
+ start tuning
+
+- HW_SAMPR_CAPS: both DAC clock families (no resampling of 48 kHz MP3s)
+- 9 PCM chunks; playback starts on a full buffer (small memory)
+- buffering: top up without compacting unless filling stalls; reclaim
+  audio buffer space in steps of up to 2 KiB (moving the metadata handle
+  behind it was ~10 % CPU)
+- test hooks: PCM start log, LR profiling, volume key injection
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ apps/buffering.c                              | 18 +++++++++++++++++-
+ apps/pcmbuf.c                                 | 19 ++++++++++++++++---
+ firmware/export/config/yotonym03.h            |  6 +++++-
+ firmware/target/arm/atj2157/timer-atj2157.c   |  6 +++++-
+ .../arm/atj2157/yotonym03/pcm-yotonym03.c     |  6 ++++++
+ 5 files changed, 49 insertions(+), 6 deletions(-)
+
+diff --git a/apps/buffering.c b/apps/buffering.c
+index 3bbe1aa..5867cf3 100644
+--- a/apps/buffering.c
++++ b/apps/buffering.c
+@@ -771,6 +771,13 @@ static struct memory_handle * shrink_handle(struct memory_handle *h)
+            but the handle will remain movable in either case */
+         size_t delta = ringbuf_sub_empty(h->ridx, h->data);
+ 
++#if MEMORYSIZE < 2
++        /* each move of an audio handle makes the metadata handle before it
++           follow (a whole mp3entry): with a few KiB of buffer that happened
++           many times a second. Reclaim space in useful amounts. */
++        if (delta < MIN(2048, buffer_len / 4))
++            return h;
++#endif
+         /* The value of delta might change for alignment reasons */
+         if (!move_handle(&h, &delta, 0))
+             return h;
+@@ -1674,8 +1681,17 @@ static void NORETURN_ATTR buffering_thread(void)
+             if (data_counters.useful >= BUF_WATERMARK &&
+                 data_counters.remaining > 0 &&
+                 data_counters.useful < buffer_len * 3 / 4) {
+-                shrink_buffer();
++                /* compacting moves the metadata handles (a whole mp3entry
++                   each): only when filling cannot proceed without it */
+                 filling = fill_buffer();
++                if (!filling) {
++                    update_data_counters(NULL);
++                    if (data_counters.remaining > 0 &&
++                        data_counters.useful < buffer_len * 3 / 4) {
++                        shrink_buffer();
++                        filling = fill_buffer();
++                    }
++                }
+             } else
+ #endif
+             if (data_counters.useful < BUF_WATERMARK) {
+diff --git a/apps/pcmbuf.c b/apps/pcmbuf.c
+index 5646e77..1153ed6 100644
+--- a/apps/pcmbuf.c
++++ b/apps/pcmbuf.c
+@@ -85,9 +85,10 @@ static inline unsigned int data_level(int quarter_secs)
+  * missing in the file buffer (and USB mass storage can not get its buffer
+  * from playback) */
+ #if MEMORYSIZE < 2
+-/* 8 chunks (~93 ms at 44.1 kHz): the decoder has to stay just ahead,
+- * including across a full Now Playing redraw at a track change */
+-#define MIN_BUFFER_SIZE     (PCMBUF_CHUNK_SIZE * 8)
++/* 9 chunks (~96 ms at 48 kHz): the decoder has to stay just ahead,
++ * including across a screen change; more would take it from the file
++ * buffer, which is only a few KiB */
++#define MIN_BUFFER_SIZE     (PCMBUF_CHUNK_SIZE * 9)
+ #define PCMBUF_WATERMARK    (PCMBUF_CHUNK_SIZE * 3)
+ #define LOW_DATA            pcmbuf_watermark
+ #elif MEMORYSIZE > 4
+@@ -529,9 +530,15 @@ void * pcmbuf_request_buffer(int *count)
+         /* Boost CPU for pre-buffer */
+         trigger_cpu_boost();
+ 
++#if MEMORYSIZE < 2
++        /* The watermark is ~30 ms here: starting there runs dry while the
++           decoder is still paging in its code. Playback starts when the
++           buffer is full (above), or at the end of the data. */
++#else
+         /* If pre-buffered to the watermark, start playback */
+         if (!pcmbuf_data_critical())
+             start_audio_playback();
++#endif
+     }
+ 
+     void *buf;
+@@ -882,6 +889,12 @@ void pcmbuf_play_start(void)
+         chunk_widx != chunk_ridx)
+     {
+         YTR(2);     /* counts real (re)starts: underruns after the first */
++        {
++            extern volatile unsigned long ym03_pcm_start_log[8];
++            long k = ym03_pcm_trace[2];
++            if (k >= 1 && k <= 8)
++                ym03_pcm_start_log[k - 1] = current_tick | 0x80000000;
++        }
+         current_desc = NULL;
+         static const struct mixer_play_cbs cbs = {
+             .get_more = pcmbuf_pcm_callback,
+diff --git a/firmware/export/config/yotonym03.h b/firmware/export/config/yotonym03.h
+index 1b8b2c8..2305029 100644
+--- a/firmware/export/config/yotonym03.h
++++ b/firmware/export/config/yotonym03.h
+@@ -61,7 +61,11 @@
+ #define DEFAULT_BRIGHTNESS_SETTING  10
+ 
+ /* Codec / audio hardware defines (internal DAC, not yet supported) */
+-#define HW_SAMPR_CAPS   SAMPR_CAP_44
++/* DAC clock from the 176.4/192 kHz families (pcm-yotonym03.c dac_set_rate):
++ * native 48 kHz avoids resampling most MP3s */
++#define HW_SAMPR_CAPS   (SAMPR_CAP_48 | SAMPR_CAP_44 | SAMPR_CAP_32 | \
++                         SAMPR_CAP_24 | SAMPR_CAP_22 | SAMPR_CAP_16 | \
++                         SAMPR_CAP_12 | SAMPR_CAP_11 | SAMPR_CAP_8)
+ #define HAVE_DUMMY_CODEC
+ #define HAVE_SW_TONE_CONTROLS
+ #define HAVE_SW_VOLUME_CONTROL
+diff --git a/firmware/target/arm/atj2157/timer-atj2157.c b/firmware/target/arm/atj2157/timer-atj2157.c
+index ea25133..6574eaf 100644
+--- a/firmware/target/arm/atj2157/timer-atj2157.c
++++ b/firmware/target/arm/atj2157/timer-atj2157.c
+@@ -51,7 +51,11 @@ void timer_irq_handler(void)
+             asm volatile ("mrs %0, psp" : "=r" (frame));
+         else
+             frame = (uint32_t *)__builtin_frame_address(0) + 2; /* approx */
+-        ym03_cpu_samples[ym03_cpu_nsamples++] = (exc & 4) ? frame[6] : 0xfffffff0;
++        /* "LRPF" at 0x137fd8: the interrupted code's return address
++         * (caller of a leaf like memmove) instead of its PC */
++        bool lr = *(volatile uint32_t *)0x137fd8 == 0x4650524c;
++        ym03_cpu_samples[ym03_cpu_nsamples++] =
++            (exc & 4) ? frame[lr ? 5 : 6] : 0xfffffff0;
+     }
+     if (pfn_timer != NULL)
+         pfn_timer();
+diff --git a/firmware/target/arm/atj2157/yotonym03/pcm-yotonym03.c b/firmware/target/arm/atj2157/yotonym03/pcm-yotonym03.c
+index 8e141b5..93eb8f2 100644
+--- a/firmware/target/arm/atj2157/yotonym03/pcm-yotonym03.c
++++ b/firmware/target/arm/atj2157/yotonym03/pcm-yotonym03.c
+@@ -46,6 +46,9 @@ void dma_irq_handler(void);
+ 
+ /* playback statistics, shown by the host test mode (apps/main.c) */
+ volatile unsigned long ym03_pcm_irqs, ym03_pcm_bytes, ym03_pcm_starts;
++/* test statistics: tick and sample rate of the first 8 starts */
++volatile unsigned long ym03_pcm_start_log[8];
++static unsigned long ym03_rate;
+ 
+ /* --- low-level DAC ------------------------------------------------------- */
+ 
+@@ -185,6 +188,7 @@ static void sink_postinit(void)
+ 
+ static void sink_set_freq(uint16_t freq)
+ {
++    ym03_rate = hw_freq_sampr[freq] / 100;
+     dac_set_rate(hw_freq_sampr[freq]);
+ }
+ 
+@@ -202,6 +206,8 @@ static void sink_unlock(void)
+ 
+ static void sink_play(const void *addr, size_t size)
+ {
++    if (ym03_pcm_starts < 8)
++        ym03_pcm_start_log[ym03_pcm_starts] = current_tick | ym03_rate << 16;
+     ym03_pcm_starts++;
+     dma_start(addr, size);
+     pcm_play_dma_status_callback(PCM_DMAST_STARTED);
+-- 
+2.56.0
+

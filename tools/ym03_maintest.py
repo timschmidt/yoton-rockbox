@@ -32,6 +32,7 @@ p.add_argument("--keys", action="store_true", help="guided capture of VOL+/VOL-/
 p.add_argument("--dirtime", action="store_true", help="time two full reads of /KEXP")
 p.add_argument("--plugin", type=int, help="run test plugin N (see main.c) instead of autoplay")
 p.add_argument("--list", action="store_true", help="autoplay the files named in /ym03test.lst")
+p.add_argument("--lrprof", action="store_true", help="CPU profile records return addresses (callers)")
 p.add_argument("--vol5", action="store_true", help="inject five Vol- presses from 3 s")
 p.add_argument("--pcm", action="store_true", help="autoplay the AIFF/WAV test files even if /ym03test.mp3 exists")
 a = p.parse_args()
@@ -57,6 +58,8 @@ if a.pcm:
     d.write(0x137FD8, b"NOMP")
 if a.list:
     d.write(0x137FD8, b"LIST")
+if a.lrprof:
+    d.write(0x137FD8, b"LRPF")
 if a.vol5:
     d.write(0x137FD8, b"VOL5")
 if a.back:

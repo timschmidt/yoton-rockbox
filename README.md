@@ -29,7 +29,7 @@ Toolchain: `arm-none-eabi-gcc` (the `tools/xbin` links provide the
 `arm-elf-eabi-*` names Rockbox's build expects).
 
     git clone https://github.com/Rockbox/rockbox ext/rockbox
-    git -C ext/rockbox am ../../patches/0001-*.patch
+    git -C ext/rockbox am ../../patches/*.patch
     mkdir -p build/ym03-main && cd build/ym03-main
     ../../ext/rockbox/tools/configure --target=yotonym03 --type=N
     cd ../.. && python3 tools/ym03_pagelink.py build/ym03-main link
