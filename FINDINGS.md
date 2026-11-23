@@ -305,7 +305,7 @@ minimp3 decoder on the FPU (`apps/codec_builtin_mp3.c`, state in the codec area 
 plays with Now Playing up (~15 % idle). The DAC runs natively at 8-48 kHz (both clock families), so the
 48 kHz MP3s that make up most of the owner's library are not resampled (owner-verified by ear: correct
 pitch and speed, no dropouts while browsing). Small-memory tuning: 9 × 2 KB PCM
-chunks (playback starts on a full buffer), ~6.8 KB file ring reclaimed in ≥1.7 KB steps, 2 KB guard,
+chunks in a fixed area (playback starts on a full buffer), ~6.8 KB file ring reclaimed in ≥1.7 KB steps, 2 KB guard,
 buffering polls every 50 ms, UI yield points (list draw, LCD update, directory read) so long UI work cannot starve
 the decoder.
 
@@ -316,10 +316,12 @@ read), timer, watchdog. Folders larger than the browser buffer (e.g. 3000 entrie
 ~50 entries with "<< Previous entries" / "More entries >>" (one directory pass, ~1-2 s, per move); a playlist
 started in such a folder continues into the next window at its end (verified: tracks 58→120 across windows).
 
-**Plugins.** Load into codec area + plugin buffer (27.5 KB; playback is stopped first), HM60x key layout
-(Back = Power). 83 of 146 build and fit; installed to `.rockbox/rocks`. Chessbox fails (engine too deep for the
-6 KB stack); the 19 largest plugins do not fit. Lending them the top 16 KB of the (stopped) audio buffer does not
-work as is: buflib keeps its handle table at the end of the pool, right below the codec area.
+**Plugins.** The PCM buffer has a fixed place right below the codec area (`PCMBUF_STATIC_SIZE`, not in the audio
+buffer), so plugins, which stop playback first, load into PCM buffer + codec area + plugin buffer (46 KB).
+HM60x key layout (Back = Power). 94 of 146 build and fit; 92 are installed in `.rockbox/rocks` (Rockblox,
+Solitaire, Sudoku verified on the device). Chessbox fails (engine too deep for the 6 KB stack); 8 do not fit
+(the smallest misses by 0.5 and 1.2 KB). Playback cannot start while a plugin is loaded. USB mass storage uses
+the same fixed area for its 16 KB of transfer buffers (playback is stopped in USB mode).
 
 **Limits.** 320 KB RAM: no FLAC/Vorbis/AAC/WMA/Opus (FLAC: 24-32 KB decode buffers plus 8-12 KB frames vs a
 ~27 KB codec area and ~9 KB file ring; the others are larger still; Speex/WavPack are 13-14 KB over), no database, no loadable

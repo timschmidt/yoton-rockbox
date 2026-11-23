@@ -1,0 +1,206 @@
+From 1f03c829157ed1b196d385722b4706fe5cc17772 Mon Sep 17 00:00:00 2001
+From: Timothy Schmidt <timschmidt@gmail.com>
+Date: Mon, 23 Nov 2026 05:14:02 -0500
+Subject: [PATCH 4/4] yotonym03: fixed PCM buffer area shared with plugins and
+ USB storage
+
+The PCM buffer gets a fixed place right below the codec area instead of
+coming from the audio buffer (PCMBUF_STATIC_SIZE). Plugins, which stop
+playback, load into PCM buffer + codec area + plugin buffer (46 KiB
+instead of 27.5 KiB: 94 of 146 plugins fit instead of 83); playback
+refuses to start while one is loaded. USB mass storage uses the same
+area for its transfer buffers (the audio buffer pool alone is too small
+for them now).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ apps/pcmbuf.c                       |  3 ++-
+ apps/playback.c                     | 24 ++++++++++++++++++++++++
+ apps/plugin.c                       |  6 +++---
+ apps/plugins/plugin.lds             |  7 ++++---
+ firmware/export/config/yotonym03.h  |  4 ++++
+ firmware/target/arm/atj2157/app.lds |  6 ++++--
+ firmware/usbstack/usb_storage.c     | 20 +++++++++++++++++++-
+ 7 files changed, 60 insertions(+), 10 deletions(-)
+
+diff --git a/apps/pcmbuf.c b/apps/pcmbuf.c
+index 1153ed6..d63bcfe 100644
+--- a/apps/pcmbuf.c
++++ b/apps/pcmbuf.c
+@@ -590,7 +590,8 @@ static unsigned int get_next_required_pcmbuf_chunks(void)
+ {
+     size_t size = MIN_BUFFER_SIZE;
+ 
+-#ifdef HAVE_CROSSFADE
++    /* (a fixed-size PCM buffer has no room for crossfading) */
++#if defined(HAVE_CROSSFADE) && !defined(PCMBUF_STATIC_SIZE)
+     if (crossfade_enable_request != CROSSFADE_ENABLE_OFF)
+     {
+         size_t seconds = global_settings.crossfade_fade_out_delay +
+diff --git a/apps/playback.c b/apps/playback.c
+index 46879ea..79fb2e3 100644
+--- a/apps/playback.c
++++ b/apps/playback.c
+@@ -920,9 +920,22 @@ static void audio_reset_buffer_noalloc(
+        changed, do check the adjustments after the buffer_alloc call
+        as it will likely be affected and need sliding over */
+     size_t allocsize;
++#ifdef PCMBUF_STATIC_SIZE
++    /* the PCM buffer has its own place (plugins use it while they run:
++       playback cannot start then) */
++    {
++        extern unsigned char pcmbuf_static[];
++        extern bool plugin_in_codec_area(void);
++        if (!plugin_in_codec_area() &&
++            pcmbuf_init(pcmbuf_static + PCMBUF_STATIC_SIZE) > PCMBUF_STATIC_SIZE)
++            panicf("PCMBUF_STATIC_SIZE too small");
++        allocsize = 0;
++    }
++#else
+     /* Subtract whatever the pcm buffer says it used plus the guard
+        buffer */
+     allocsize = pcmbuf_init(filebuf + filebuflen);
++#endif
+ 
+     /* Make sure filebuflen is a pointer sized multiple after
+        adjustment */
+@@ -3052,6 +3065,17 @@ static void audio_start_playback(const struct audio_resume_info *resume_info,
+         queue_reply(&audio_queue, 0);
+         return;
+     }
++#endif
++#ifdef PCMBUF_STATIC_SIZE
++    /* a plugin runs where the PCM buffer is */
++    {
++        extern bool plugin_in_codec_area(void);
++        if (plugin_in_codec_area())
++        {
++            queue_reply(&audio_queue, 0);
++            return;
++        }
++    }
+ #endif
+     static struct audio_resume_info resume = { 0, 0 };
+     enum play_status old_status = play_status;
+diff --git a/apps/plugin.c b/apps/plugin.c
+index 91b7d51..c773ec7 100644
+--- a/apps/plugin.c
++++ b/apps/plugin.c
+@@ -907,8 +907,8 @@ static size_t plugin_buffer_size;
+ /* where plugins are loaded */
+ #ifdef PLUGIN_IN_CODEC_AREA
+ extern unsigned char codecbuf[];
+-#define PLUGIN_LOAD_BUF     codecbuf
+-#define PLUGIN_LOAD_SIZE    (CODEC_SIZE + PLUGIN_BUFFER_SIZE - 64)
++#define PLUGIN_LOAD_BUF     (codecbuf - PCMBUF_STATIC_SIZE)
++#define PLUGIN_LOAD_SIZE    (PCMBUF_STATIC_SIZE + CODEC_SIZE + PLUGIN_BUFFER_SIZE - 64)
+ 
+ bool plugin_in_codec_area(void)
+ {
+@@ -976,7 +976,7 @@ int plugin_load(const char* plugin, const void* parameter)
+     /* the plugin goes where the codec is: stop playback first */
+     {
+         extern bool codec_area_in_use(void);
+-        if (codec_area_in_use())
++        if (codec_area_in_use() || (audio_status() & AUDIO_STATUS_PLAY))
+         {
+             audio_stop();
+             for (int i = 0; i < 2 * HZ && codec_area_in_use(); i++)
+diff --git a/apps/plugins/plugin.lds b/apps/plugins/plugin.lds
+index 2808ead..3d815f0 100644
+--- a/apps/plugins/plugin.lds
++++ b/apps/plugins/plugin.lds
+@@ -138,9 +138,10 @@ OUTPUT_FORMAT(elf32-littlemips)
+ #define DRAMORIG ATJ_SRAM0_BASE
+ #define DRAMSIZE (ATJ_SRAM0_SIZE - PLUGIN_BUFFER_SIZE - CODEC_SIZE)
+ #ifdef PLUGIN_IN_CODEC_AREA
+-/* plugins: codec area + plugin buffer, below the 64 bytes of boot markers */
+-#define PLUGIN_ORIGIN (DRAMORIG + DRAMSIZE)
+-#define PLUGIN_LENGTH (CODEC_SIZE + PLUGIN_BUFFER_SIZE - 64)
++/* plugins: PCM buffer + codec area + plugin buffer, below the 64 bytes of
++ * boot markers (apps/plugin.c) */
++#define PLUGIN_ORIGIN (DRAMORIG + DRAMSIZE - PCMBUF_STATIC_SIZE)
++#define PLUGIN_LENGTH (PCMBUF_STATIC_SIZE + CODEC_SIZE + PLUGIN_BUFFER_SIZE - 64)
+ #endif
+ 
+ #else
+diff --git a/firmware/export/config/yotonym03.h b/firmware/export/config/yotonym03.h
+index 2305029..4a118e9 100644
+--- a/firmware/export/config/yotonym03.h
++++ b/firmware/export/config/yotonym03.h
+@@ -28,6 +28,10 @@
+ /* plugins load into the codec area + plugin buffer (playback is stopped
+  * for them): the 4 KiB plugin buffer alone fits no plugin */
+ #define PLUGIN_IN_CODEC_AREA
++/* the PCM buffer has a fixed place right below the codec area (not in the
++ * audio buffer): plugins, which stop playback, get PCM buffer + codec area
++ * + plugin buffer (apps/playback.c, apps/plugin.c, app.lds, plugin.lds) */
++#define PCMBUF_STATIC_SIZE  0x4a00
+ 
+ /* MP3 through the built-in minimp3 decoder (apps/codec_builtin_mp3.c) */
+ #define HAVE_BUILTIN_MINIMP3
+diff --git a/firmware/target/arm/atj2157/app.lds b/firmware/target/arm/atj2157/app.lds
+index 1deef1a..594a766 100644
+--- a/firmware/target/arm/atj2157/app.lds
++++ b/firmware/target/arm/atj2157/app.lds
+@@ -91,8 +91,10 @@ SECTIONS
+     {
+         audiobuffer = .;
+     } > SRAM0
+-    audiobufend = ORIGIN(SRAM0) + LENGTH(SRAM0) - CODEC_SIZE - PLUGIN_BUFFER_SIZE;
+-    codecbuf = audiobufend;
++    audiobufend = ORIGIN(SRAM0) + LENGTH(SRAM0) - CODEC_SIZE - PLUGIN_BUFFER_SIZE
++                  - PCMBUF_STATIC_SIZE;
++    pcmbuf_static = audiobufend;
++    codecbuf = pcmbuf_static + PCMBUF_STATIC_SIZE;
+     pluginbuf = codecbuf + CODEC_SIZE;
+ 
+     .framebuffer (NOLOAD) :
+diff --git a/firmware/usbstack/usb_storage.c b/firmware/usbstack/usb_storage.c
+index ef64f75..bc02fa8 100644
+--- a/firmware/usbstack/usb_storage.c
++++ b/firmware/usbstack/usb_storage.c
+@@ -495,6 +495,21 @@ static void start_receiving_commands(void)
+     if (usb_handle > 0)
+         return; /* already receiving */
+ 
++#ifdef PCMBUF_STATIC_SIZE
++    /* playback is stopped in USB mode: use the fixed PCM buffer area (the
++     * audio buffer pool alone is too small) - unless a plugin occupies it,
++     * then wait for it to exit */
++    {
++        extern unsigned char pcmbuf_static[];
++        extern bool plugin_in_codec_area(void);
++        _Static_assert(ALLOCATE_BUFFER_SIZE + MAX_CBW_SIZE + 31 <= PCMBUF_STATIC_SIZE,
++                       "USB buffers do not fit the PCM buffer area");
++        if (plugin_in_codec_area())
++            return;
++        usb_handle = 1;     /* "allocated" */
++        buffer = pcmbuf_static;
++    }
++#else
+     // Add 31 to handle worst-case misalignment
+     usb_handle = core_alloc_ex(ALLOCATE_BUFFER_SIZE + MAX_CBW_SIZE + 31,
+                                &buflib_ops_locked);
+@@ -502,6 +517,7 @@ static void start_receiving_commands(void)
+         panicf("%s(): OOM", __func__);
+ 
+     buffer = core_get_data(usb_handle);
++#endif
+ #if defined(UNCACHED_ADDR) && CONFIG_CPU != AS3525
+     cbw_buffer = (void *)UNCACHED_ADDR((unsigned int)(buffer+31) & 0xffffffe0);
+ #else
+@@ -545,7 +561,9 @@ static int usb_storage_init_connection(void)
+ 
+ void usb_storage_disconnect(void)
+ {
+-#ifndef USB_STATIC_ALLOC
++#if defined(PCMBUF_STATIC_SIZE)
++    usb_handle = 0;
++#elif !defined(USB_STATIC_ALLOC)
+     usb_handle = core_free(usb_handle);
+ #endif
+ }
+-- 
+2.56.0
+
